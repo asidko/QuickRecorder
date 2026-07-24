@@ -262,30 +262,16 @@ extension AppDelegate {
         }
         
         let encoderIsH265 = (encoder.rawValue == Encoder.h265.rawValue) || recordHDR
+        var forceH265 = false
         if !audioOnly && !encoderIsH265 {
-            var session: VTCompressionSession?
-            let status = VTCompressionSessionCreate(
-                allocator: nil,
-                width: Int32(conf.width),
-                height: Int32(conf.height),
-                codecType: kCMVideoCodecType_H264,
-                encoderSpecification: [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true] as CFDictionary,
-                imageBufferAttributes: nil,
-                compressedDataAllocator: nil,
-                outputCallback: nil,
-                refcon: nil,
-                compressionSessionOut: &session
-            )
-            
-            if status != noErr {
-                let button = showAlertSyncOnMainThread(
-                    level: .critical,
-                    title: "Encoder Warning",
-                    message: "VideoToolbox H.264 hardware encoder doesn't support the current resolution.\nContinue with a software encoder will significantly increase the CPU usage.\n\nWould you like to use H.265 instead?".local,
-                    button1: "Use H.265",
-                    button2: "Continue with H.264"
+            let h264OK = hardwareEncoderSupported(kCMVideoCodecType_H264, width: conf.width, height: conf.height)
+            if !h264OK && hardwareEncoderSupported(kCMVideoCodecType_HEVC, width: conf.width, height: conf.height) {
+                forceH265 = true
+                SCContext.showNotification(
+                    title: "Switched to H.265".local,
+                    body: "H.264 hardware encoding isn't available at this resolution. Using H.265 for this recording to keep CPU usage low and avoid dropped frames.".local,
+                    id: "quickrecorder.encoder.h265fallback"
                 )
-                if button == .alertFirstButtonReturn { ud.setValue(Encoder.h265.rawValue, forKey: "encoder") }
             }
         }
         
@@ -294,7 +280,7 @@ extension AppDelegate {
             try SCContext.stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global())
             if #available(macOS 13, *) { try SCContext.stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global()) }
             if !audioOnly {
-                initVideo(conf: conf)
+                initVideo(conf: conf, forceH265: forceH265)
             } else {
                 //SCContext.startTime = Date.now
                 if recordMic { startMicRecording() }
@@ -369,7 +355,25 @@ extension SCDisplay {
 }
 
 extension AppDelegate {
-    func initVideo(conf: SCStreamConfiguration) {
+    func hardwareEncoderSupported(_ codec: CMVideoCodecType, width: Int, height: Int) -> Bool {
+        var session: VTCompressionSession?
+        let status = VTCompressionSessionCreate(
+            allocator: nil,
+            width: Int32(width),
+            height: Int32(height),
+            codecType: codec,
+            encoderSpecification: [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder as String: true] as CFDictionary,
+            imageBufferAttributes: nil,
+            compressedDataAllocator: nil,
+            outputCallback: nil,
+            refcon: nil,
+            compressionSessionOut: &session
+        )
+        if let session = session { VTCompressionSessionInvalidate(session) }
+        return status == noErr
+    }
+
+    func initVideo(conf: SCStreamConfiguration, forceH265: Bool = false) {
         SCContext.startTime = nil
 
         let fileEnding = videoFormat.rawValue
@@ -386,7 +390,7 @@ extension AppDelegate {
             SCContext.filePath = "\(SCContext.getFilePath()).\(fileEnding)"
         }
         SCContext.vW = try? AVAssetWriter.init(outputURL: SCContext.filePath.url, fileType: fileType!)
-        let encoderIsH265 = (encoder.rawValue == Encoder.h265.rawValue) || recordHDR
+        let encoderIsH265 = (encoder.rawValue == Encoder.h265.rawValue) || recordHDR || forceH265
         let fpsMultiplier: Double = Double(frameRate)/8
         let encoderMultiplier: Double = encoderIsH265 ? 0.5 : 0.9
         let resolution = Double(max(600, conf.width)) * Double(max(600, conf.height))
