@@ -760,10 +760,15 @@ class SCContext {
         
         var outSampleBuffer: CMSampleBuffer?
         CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sample, sampleTimingEntryCount: timingInfo.count, sampleTimingArray: &timingInfo, sampleBufferOut: &outSampleBuffer)
-        
+
         return outSampleBuffer
     }
-    
+
+    static func offsetAudio(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer {
+        guard timeOffset.value > 0 else { return sampleBuffer }
+        return adjustTime(sample: sampleBuffer, by: timeOffset) ?? sampleBuffer
+    }
+
     static func showNotification(title: String, body: String, id: String) {
         let content = UNMutableNotificationContent()
         content.title = title

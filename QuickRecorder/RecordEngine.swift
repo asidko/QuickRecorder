@@ -618,7 +618,7 @@ extension AppDelegate {
                 }
             } else {
                 if SCContext.lastPTS == nil { return }
-                SCContext.append(SampleBuffer, to: SCContext.awInput)
+                SCContext.append(SCContext.offsetAudio(SampleBuffer), to: SCContext.awInput)
             }
 #if compiler(>=6.0)
         case .microphone:
