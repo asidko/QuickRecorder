@@ -141,12 +141,25 @@ class AVOutputClass: NSObject, AVCaptureFileOutputRecordingDelegate, AVCaptureVi
     }
 
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
+        var success = true
+        if let error = error {
+            success = (error as NSError).userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false
+        }
         let content = UNMutableNotificationContent()
-        content.title = "Recording Completed".local
-        content.body = String(format: "File saved to: %@".local, outputFileURL.path)
+        if success {
+            content.title = "Recording Completed".local
+            content.body = String(format: "File saved to: %@".local, outputFileURL.path)
+        } else {
+            // A reported error can still leave a usable file, so we branch on AVErrorRecordingSuccessfullyFinishedKey.
+            // On a real failure the partial file is unplayable, so delete it rather than leave junk on disk.
+            try? fd.removeItem(at: outputFileURL)
+            content.title = "Failed to save file".local
+            content.body = error?.localizedDescription ?? "The recording could not be saved.".local
+        }
         content.sound = UNNotificationSound.default
+        let id = success ? "quickrecorder.completed.\(UUID().uuidString)" : "quickrecorder.error.\(UUID().uuidString)"
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(identifier: "quickrecorder.completed.\(UUID().uuidString)", content: content, trigger: trigger)
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error { print("Notification failed to send：\(error.localizedDescription)") }
         }
