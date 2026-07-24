@@ -744,12 +744,18 @@ class SCContext {
     static func adjustTime(sample: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
         guard CMSampleBufferGetFormatDescription(sample) != nil else { return nil }
         
-        var timingInfo = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: Int(CMSampleBufferGetNumSamples(sample)))
-        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: timingInfo.count, arrayToFill: &timingInfo, entriesNeededOut: nil)
-        
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        var timingInfo = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        CMSampleBufferGetSampleTimingInfoArray(sample, entryCount: count, arrayToFill: &timingInfo, entriesNeededOut: nil)
+
         for i in 0..<timingInfo.count {
-            timingInfo[i].decodeTimeStamp = CMTimeSubtract(timingInfo[i].decodeTimeStamp, offset)
-            timingInfo[i].presentationTimeStamp = CMTimeSubtract(timingInfo[i].presentationTimeStamp, offset)
+            if timingInfo[i].decodeTimeStamp.flags.contains(.valid) {
+                timingInfo[i].decodeTimeStamp = CMTimeSubtract(timingInfo[i].decodeTimeStamp, offset)
+            }
+            if timingInfo[i].presentationTimeStamp.flags.contains(.valid) {
+                timingInfo[i].presentationTimeStamp = CMTimeSubtract(timingInfo[i].presentationTimeStamp, offset)
+            }
         }
         
         var outSampleBuffer: CMSampleBuffer?
