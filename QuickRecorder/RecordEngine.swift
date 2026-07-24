@@ -147,6 +147,7 @@ extension AppDelegate {
         SCContext.isPaused = false
         SCContext.isResume = false
         SCContext.writeFailureHandled = false
+        SCContext.lastMicPTS = nil
 
         let audioOnly = SCContext.streamType == .systemaudio
         
@@ -454,17 +455,21 @@ extension AppDelegate {
                     default: level = .mid
                 }
                 try? SCContext.AECEngine.startAudioStream(enableAEC: enableAEC, duckingLevel: level, audioBufferHandler: { pcmBuffer in
-                    if SCContext.isPaused || SCContext.startTime == nil { return }
-                    SCContext.append(pcmBuffer.asSampleBuffer, to: SCContext.micInput)
+                    if SCContext.isPaused || SCContext.isResume || SCContext.startTime == nil { return }
+                    SCContext.appendMic(pcmBuffer.asSampleBuffer)
                 })
             } else {
                 let input = SCContext.audioEngine.inputNode
                 let inputFormat = input.inputFormat(forBus: 0)
                 input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, time in
-                    if SCContext.isPaused || SCContext.startTime == nil { return }
-                    SCContext.append(buffer.asSampleBuffer, to: SCContext.micInput)
+                    if SCContext.isPaused || SCContext.isResume || SCContext.startTime == nil { return }
+                    SCContext.appendMic(buffer.asSampleBuffer)
                 }
-                try! SCContext.audioEngine.start()
+                do {
+                    try SCContext.audioEngine.start()
+                } catch {
+                    print("Failed to start audio engine: \(error.localizedDescription)")
+                }
             }
         } else {
             AudioRecorder.shared.setupAudioCapture()
@@ -697,8 +702,8 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        if SCContext.isPaused || SCContext.startTime == nil { return }
-        SCContext.append(sampleBuffer, to: SCContext.micInput)
+        if SCContext.isPaused || SCContext.isResume || SCContext.startTime == nil { return }
+        SCContext.appendMic(sampleBuffer)
     }
 }
 
