@@ -23,8 +23,17 @@ jobs:
       - name: Build
         run: xcodebuild build -project QuickRecorder.xcodeproj -scheme QuickRecorder -configuration Release -destination 'platform=macOS' -derivedDataPath build ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
 
+      # Nested bundles are signed inside-out: --deep is deprecated and leaves the
+      # framework's inner Mach-O untouched. Hardened runtime is omitted on purpose -
+      # it enables library validation, which rejects an ad-hoc framework loaded by an
+      # ad-hoc app because neither carries a Team ID.
       - name: Ad-hoc sign
-        run: codesign --force --deep --sign - --options runtime "$APP" && codesign -dv "$APP"
+        run: |
+          V="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+          for target in "$V/XPCServices/Downloader.xpc" "$V/XPCServices/Installer.xpc" "$V/Updater.app" "$APP/Contents/Frameworks/Sparkle.framework" "$APP"; do
+            codesign --force --sign - "$target"
+          done
+          codesign --verify --strict "$APP"
 
       - name: Verify
         run: lipo -archs "$APP/Contents/MacOS/QuickRecorder"
