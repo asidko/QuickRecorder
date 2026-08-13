@@ -42,13 +42,12 @@ extension AppDelegate {
             }
         }
 
-        if let free = DiskSpaceMonitor.availableBytes(at: outputPath), free < DiskSpaceMonitor.startThreshold {
+        if let free = DiskSpace.availableBytes(at: outputPath), free < DiskSpace.startThreshold {
             SCContext.streamType = nil
-            let message = String(format: "Not enough free disk space! Only %@ left on the output volume.".local, DiskSpaceMonitor.formatted(free))
+            let message = String(format: "Not enough free disk space! Only %@ left on the output volume.".local, DiskSpace.formatted(free))
             _ = createAlert(title: "Failed to Record".local, message: message, button1: "OK").runModal()
             return
         }
-        SCContext.writeFailureHandled = false
 
         // file preparation
         if let screens = screens {
@@ -149,7 +148,8 @@ extension AppDelegate {
         SCContext.timeOffset = CMTimeMake(value: 0, timescale: 0)
         SCContext.isPaused = false
         SCContext.isResume = false
-        
+        SCContext.writeFailureHandled = false
+
         let audioOnly = SCContext.streamType == .systemaudio
         
         let conf: SCStreamConfiguration
@@ -308,7 +308,7 @@ extension AppDelegate {
         if !audioOnly { registerGlobalMouseMonitor() }
         DispatchQueue.main.async {
             updateStatusBar()
-            if let outputPath = self.saveDirectory { DiskSpaceMonitor.shared.start(watching: outputPath) }
+            DiskSpace.startMonitoring(SCContext.filePath) { SCContext.abortRecording(reason: $0) }
         }
         if preventSleep { SleepPreventer.shared.preventSleep(reason: "Screen recording in progress") }
     }
@@ -457,14 +457,14 @@ extension AppDelegate {
                 }
                 try? SCContext.AECEngine.startAudioStream(enableAEC: enableAEC, duckingLevel: level, audioBufferHandler: { pcmBuffer in
                     if SCContext.isPaused || SCContext.startTime == nil { return }
-                    SCContext.append(pcmBuffer.asSampleBuffer!, to: SCContext.micInput)
+                    SCContext.append(pcmBuffer.asSampleBuffer, to: SCContext.micInput)
                 })
             } else {
                 let input = SCContext.audioEngine.inputNode
                 let inputFormat = input.inputFormat(forBus: 0)
                 input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, time in
                     if SCContext.isPaused || SCContext.startTime == nil { return }
-                    SCContext.append(buffer.asSampleBuffer!, to: SCContext.micInput)
+                    SCContext.append(buffer.asSampleBuffer, to: SCContext.micInput)
                 }
                 try! SCContext.audioEngine.start()
             }
@@ -616,7 +616,7 @@ extension AppDelegate {
                 do { try SCContext.audioFile?.write(from: samples) }
                 catch {
                     assertionFailure("audio file writing issue".local)
-                    SCContext.reportWriteFailure(error.localizedDescription)
+                    SCContext.abortRecording(reason: error.localizedDescription)
                 }
             } else {
                 if SCContext.lastPTS == nil { return }

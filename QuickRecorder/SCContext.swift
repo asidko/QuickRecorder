@@ -327,14 +327,15 @@ class SCContext {
         }
     }
     
-    static func append(_ sample: CMSampleBuffer, to input: AVAssetWriterInput) {
-        guard input.isReadyForMoreMediaData else { return }
+    static func append(_ sample: @autoclosure () -> CMSampleBuffer?, to input: AVAssetWriterInput) {
+        guard !writeFailureHandled, input.isReadyForMoreMediaData, let sample = sample() else { return }
         if input.append(sample) { return }
         guard vW?.status == .failed else { return } // a rejected sample on a healthy writer is a normal drop
-        reportWriteFailure()
+        abortRecording()
     }
 
-    static func reportWriteFailure(_ reason: String? = nil) {
+    static func abortRecording(reason: String? = nil) {
+        guard !writeFailureHandled else { return }
         DispatchQueue.main.async { // serialises the flag against the capture queues
             guard !writeFailureHandled, stream != nil else { return }
             writeFailureHandled = true
@@ -344,9 +345,10 @@ class SCContext {
         }
     }
 
-    private static func hasSpaceToMix(_ path: String) -> Bool {
-        guard let size = (try? fd.attributesOfItem(atPath: path))?[.size] as? Int64 else { return true }
-        return DiskSpaceMonitor.canHold(size, at: path) // mixAudioTracks writes its copies next to the source
+    private static func hasSpaceToMix() -> Bool {
+        guard let size = DiskSpace.fileSize(at: filePath),
+              let free = DiskSpace.availableBytes(at: filePath) else { return true }
+        return free > size + DiskSpace.stopThreshold // mixAudioTracks writes a full copy next to the source
     }
 
     private static func salvageUnmixedRecording(reason: String) {
@@ -362,7 +364,7 @@ class SCContext {
     }
 
     static func stopRecording() {
-        DiskSpaceMonitor.shared.stop()
+        DiskSpace.stopMonitoring()
         if ud.bool(forKey: "preventSleep") { SleepPreventer.shared.allowSleep() }
         autoStop = 0
         lastPTS = nil
@@ -391,15 +393,15 @@ class SCContext {
             vwInput.markAsFinished()
             if #available(macOS 13, *) { awInput.markAsFinished() }
             vW.finishWriting {
+                defer { dispatchGroup.leave() }
                 if vW.status != .completed {
                     print("Video writing failed with status: \(vW.status), error: \(String(describing: vW.error))")
                     let err = vW.error?.localizedDescription ?? "Unknow Error"
                     if !writeFailureHandled { showNotification(title: "Failed to save file".local, body: "\(err)", id: "quickrecorder.error.\(UUID().uuidString)") }
                 } else {
                     if ud.bool(forKey: "recordMic") && ud.bool(forKey: "recordWinSound") && ud.bool(forKey: "remuxAudio") {
-                        guard hasSpaceToMix(filePath) else {
+                        guard hasSpaceToMix() else {
                             salvageUnmixedRecording(reason: "Not enough free disk space to mix the audio tracks.".local)
-                            dispatchGroup.leave()
                             return
                         }
                         mixAudioTracks(videoURL: filePath.url) { result in
@@ -423,7 +425,6 @@ class SCContext {
                         }
                     }
                 }
-                dispatchGroup.leave()
             }
             dispatchGroup.wait()
         } else {
