@@ -43,6 +43,8 @@ class SCContext {
     static var vW: AVAssetWriter!
     static var vwInput, awInput, micInput: AVAssetWriterInput!
     static var writeFailureHandled = false
+    static var permissionRetries = 0
+    static let maxPermissionRetries = 3
     static var startTime: Date?
     static var timePassed: TimeInterval = 0
     static var stream: SCStream!
@@ -71,8 +73,13 @@ class SCContext {
             if let error = error {
                 switch error {
                 case SCStreamError.userDeclined:
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-                        self.updateAvailableContent() {_ in}
+                    if permissionRetries < maxPermissionRetries {
+                        permissionRetries += 1
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                            self.updateAvailableContent() {_ in}
+                        }
+                    } else {
+                        requestPermissions()
                     }
                 default:
                     print("Error: failed to fetch available content: ".local, error.localizedDescription)
@@ -81,6 +88,7 @@ class SCContext {
                 return
             }
 
+            permissionRetries = 0
             availableContent = content
             if let displays = content?.displays, !displays.isEmpty {
                 completion(content) // 返回成功获取的 content
