@@ -1,0 +1,39 @@
+name: Package
+
+on:
+  push:
+    branches: [build/packaged-app]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-15
+    env:
+      XCODE: /Applications/Xcode_16.4.app
+      APP: build/Build/Products/Release/QuickRecorder.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select toolchain
+        run: sudo xcode-select -s "$XCODE" && xcodebuild -version
+
+      - name: Build
+        run: xcodebuild build -project QuickRecorder.xcodeproj -scheme QuickRecorder -configuration Release -destination 'platform=macOS' -derivedDataPath build ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
+
+      - name: Ad-hoc sign
+        run: codesign --force --deep --sign - --options runtime "$APP" && codesign -dv "$APP"
+
+      - name: Verify
+        run: lipo -archs "$APP/Contents/MacOS/QuickRecorder"
+
+      - name: Zip bundle
+        run: ditto -c -k --keepParent "$APP" QuickRecorder.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuickRecorder-app
+          path: QuickRecorder.zip
+          retention-days: 7
