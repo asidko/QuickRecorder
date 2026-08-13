@@ -42,6 +42,7 @@ class SCContext {
     static var audioFile2: AVAudioFile?
     static var vW: AVAssetWriter!
     static var vwInput, awInput, micInput: AVAssetWriterInput!
+    static var writeFailureHandled = false
     static var startTime: Date?
     static var timePassed: TimeInterval = 0
     static var stream: SCStream!
@@ -326,7 +327,42 @@ class SCContext {
         }
     }
     
+    static func append(_ sample: CMSampleBuffer, to input: AVAssetWriterInput) {
+        guard input.isReadyForMoreMediaData else { return }
+        if input.append(sample) { return }
+        guard vW?.status == .failed else { return } // a rejected sample on a healthy writer is a normal drop
+        reportWriteFailure()
+    }
+
+    static func reportWriteFailure(_ reason: String? = nil) {
+        DispatchQueue.main.async { // serialises the flag against the capture queues
+            guard !writeFailureHandled, stream != nil else { return }
+            writeFailureHandled = true
+            let message = reason ?? vW?.error?.localizedDescription ?? "Unknown Error".local
+            showNotification(title: "Recording Stopped".local, body: message, id: "quickrecorder.error.\(UUID().uuidString)")
+            stopRecording()
+        }
+    }
+
+    private static func hasSpaceToMix(_ path: String) -> Bool {
+        guard let size = (try? fd.attributesOfItem(atPath: path))?[.size] as? Int64 else { return true }
+        return DiskSpaceMonitor.canHold(size, at: path) // mixAudioTracks writes its copies next to the source
+    }
+
+    private static func salvageUnmixedRecording(reason: String) {
+        let source = filePath.url
+        let audioIntermediate = source.deletingPathExtension()
+        let target = audioIntermediate.deletingPathExtension()
+        try? fd.removeItem(at: audioIntermediate)
+        var saved = source
+        if !fd.fileExists(atPath: target.path), (try? fd.moveItem(at: source, to: target)) != nil { saved = target }
+        showNotification(title: "Audio Not Mixed".local,
+                         body: reason + " " + String(format: "The recording was saved with separate audio tracks to: %@".local, saved.path),
+                         id: "quickrecorder.error.\(UUID().uuidString)")
+    }
+
     static func stopRecording() {
+        DiskSpaceMonitor.shared.stop()
         if ud.bool(forKey: "preventSleep") { SleepPreventer.shared.allowSleep() }
         autoStop = 0
         lastPTS = nil
@@ -358,9 +394,14 @@ class SCContext {
                 if vW.status != .completed {
                     print("Video writing failed with status: \(vW.status), error: \(String(describing: vW.error))")
                     let err = vW.error?.localizedDescription ?? "Unknow Error"
-                    showNotification(title: "Failed to save file".local, body: "\(err)", id: "quickrecorder.error.\(UUID().uuidString)")
+                    if !writeFailureHandled { showNotification(title: "Failed to save file".local, body: "\(err)", id: "quickrecorder.error.\(UUID().uuidString)") }
                 } else {
                     if ud.bool(forKey: "recordMic") && ud.bool(forKey: "recordWinSound") && ud.bool(forKey: "remuxAudio") {
+                        guard hasSpaceToMix(filePath) else {
+                            salvageUnmixedRecording(reason: "Not enough free disk space to mix the audio tracks.".local)
+                            dispatchGroup.leave()
+                            return
+                        }
                         mixAudioTracks(videoURL: filePath.url) { result in
                             switch result {
                             case .success(let url):
@@ -377,6 +418,7 @@ class SCContext {
                                 }
                             case .failure(let error):
                                 print("Failed to export video: \(error.localizedDescription)")
+                                salvageUnmixedRecording(reason: error.localizedDescription)
                             }
                         }
                     }

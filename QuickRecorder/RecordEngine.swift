@@ -41,7 +41,15 @@ extension AppDelegate {
                 return
             }
         }
-        
+
+        if let free = DiskSpaceMonitor.availableBytes(at: outputPath), free < DiskSpaceMonitor.startThreshold {
+            SCContext.streamType = nil
+            let message = String(format: "Not enough free disk space! Only %@ left on the output volume.".local, DiskSpaceMonitor.formatted(free))
+            _ = createAlert(title: "Failed to Record".local, message: message, button1: "OK").runModal()
+            return
+        }
+        SCContext.writeFailureHandled = false
+
         // file preparation
         if let screens = screens {
             SCContext.screen = SCContext.availableContent!.displays.first(where: { $0 == screens })
@@ -298,7 +306,10 @@ extension AppDelegate {
             return
         }
         if !audioOnly { registerGlobalMouseMonitor() }
-        DispatchQueue.main.async { updateStatusBar() }
+        DispatchQueue.main.async {
+            updateStatusBar()
+            if let outputPath = self.saveDirectory { DiskSpaceMonitor.shared.start(watching: outputPath) }
+        }
         if preventSleep { SleepPreventer.shared.preventSleep(reason: "Screen recording in progress") }
     }
 
@@ -446,18 +457,14 @@ extension AppDelegate {
                 }
                 try? SCContext.AECEngine.startAudioStream(enableAEC: enableAEC, duckingLevel: level, audioBufferHandler: { pcmBuffer in
                     if SCContext.isPaused || SCContext.startTime == nil { return }
-                    if SCContext.micInput.isReadyForMoreMediaData {
-                        SCContext.micInput.append(pcmBuffer.asSampleBuffer!)
-                    }
+                    SCContext.append(pcmBuffer.asSampleBuffer!, to: SCContext.micInput)
                 })
             } else {
                 let input = SCContext.audioEngine.inputNode
                 let inputFormat = input.inputFormat(forBus: 0)
                 input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, time in
                     if SCContext.isPaused || SCContext.startTime == nil { return }
-                    if SCContext.micInput.isReadyForMoreMediaData {
-                        SCContext.micInput.append(buffer.asSampleBuffer!)
-                    }
+                    SCContext.append(buffer.asSampleBuffer!, to: SCContext.micInput)
                 }
                 try! SCContext.audioEngine.start()
             }
@@ -595,7 +602,7 @@ extension AppDelegate {
                 }
                 if isPresenterON && !isCameraReady { break }
                 if SCContext.firstFrame == nil { SCContext.firstFrame = SampleBuffer }
-                SCContext.vwInput.append(SampleBuffer)
+                SCContext.append(SampleBuffer, to: SCContext.vwInput)
             }
             break
         case .audio:
@@ -607,10 +614,13 @@ extension AppDelegate {
                 if SCContext.startTime == nil { SCContext.startTime = Date.now }
                 guard let samples = SampleBuffer.asPCMBuffer else { return }
                 do { try SCContext.audioFile?.write(from: samples) }
-                catch { assertionFailure("audio file writing issue".local) }
+                catch {
+                    assertionFailure("audio file writing issue".local)
+                    SCContext.reportWriteFailure(error.localizedDescription)
+                }
             } else {
                 if SCContext.lastPTS == nil { return }
-                if SCContext.awInput.isReadyForMoreMediaData { SCContext.awInput.append(SampleBuffer) }
+                SCContext.append(SampleBuffer, to: SCContext.awInput)
             }
 #if compiler(>=6.0)
         case .microphone:
@@ -690,9 +700,7 @@ class AudioRecorder: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         if SCContext.isPaused || SCContext.startTime == nil { return }
-        if SCContext.micInput.isReadyForMoreMediaData {
-            SCContext.micInput.append(sampleBuffer)
-        }
+        SCContext.append(sampleBuffer, to: SCContext.micInput)
     }
 }
 
