@@ -28,14 +28,18 @@ enum DiskSpace {
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
-    static func startMonitoring(_ path: String, onExhausted: @escaping (String) -> Void) {
-        stopMonitoring()
-        timer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { _ in
-            guard let free = availableBytes(at: path), free < stopThreshold else { return }
+    static func startMonitoring(_ path: String, onExhausted: @escaping (Int64) -> Void) {
+        DispatchQueue.main.async {
             stopMonitoring()
-            onExhausted(String(format: "The output disk is almost full, only %@ left.".local, formatted(free)))
+            let poll = Timer(timeInterval: pollInterval, repeats: true) { _ in
+                guard let free = availableBytes(at: path), free < stopThreshold else { return }
+                stopMonitoring()
+                onExhausted(free)
+            }
+            poll.tolerance = 1
+            RunLoop.main.add(poll, forMode: .common) // .default stalls while a menu is tracking
+            timer = poll
         }
-        timer?.tolerance = 1
     }
 
     static func stopMonitoring() {

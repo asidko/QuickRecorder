@@ -336,13 +336,21 @@ class SCContext {
 
     static func abortRecording(reason: String? = nil) {
         guard !writeFailureHandled else { return }
-        DispatchQueue.main.async { // serialises the flag against the capture queues
+        DispatchQueue.main.async { // serialises the flag against the capture queues; stream is ScreenCaptureKit-only
             guard !writeFailureHandled, stream != nil else { return }
             writeFailureHandled = true
             let message = reason ?? vW?.error?.localizedDescription ?? "Unknown Error".local
             showNotification(title: "Recording Stopped".local, body: message, id: "quickrecorder.error.\(UUID().uuidString)")
             stopRecording()
         }
+    }
+
+    static func mixIntermediateURL(for videoURL: URL) -> URL {
+        return videoURL.deletingPathExtension()
+    }
+
+    static func mixOutputURL(for videoURL: URL) -> URL {
+        return videoURL.deletingPathExtension().deletingPathExtension()
     }
 
     private static func hasSpaceToMix() -> Bool {
@@ -353,14 +361,14 @@ class SCContext {
 
     private static func salvageUnmixedRecording(reason: String) {
         let source = filePath.url
-        let audioIntermediate = source.deletingPathExtension()
-        let target = audioIntermediate.deletingPathExtension()
-        try? fd.removeItem(at: audioIntermediate)
+        let target = mixOutputURL(for: source)
+        try? fd.removeItem(at: mixIntermediateURL(for: source))
         var saved = source
         if !fd.fileExists(atPath: target.path), (try? fd.moveItem(at: source, to: target)) != nil { saved = target }
         showNotification(title: "Audio Not Mixed".local,
                          body: reason + " " + String(format: "The recording was saved with separate audio tracks to: %@".local, saved.path),
                          id: "quickrecorder.error.\(UUID().uuidString)")
+        DispatchQueue.main.async { showPreview(path: saved.path) }
     }
 
     static func stopRecording() {
@@ -758,8 +766,8 @@ class SCContext {
         showNotification(title: "Still Processing".local, body: "Mixing audio track...".local, id: "quickrecorder.processing.\(UUID().uuidString)")
         
         let asset = AVAsset(url: videoURL)
-        let audioOutputURL = videoURL.deletingPathExtension()
-        let outputURL = audioOutputURL.deletingPathExtension()
+        let audioOutputURL = mixIntermediateURL(for: videoURL)
+        let outputURL = mixOutputURL(for: videoURL)
         let audioOnlyComposition = AVMutableComposition()
         
         let fileEnding = ud.string(forKey: "videoFormat") ?? ""

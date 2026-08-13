@@ -24,29 +24,27 @@ extension AppDelegate {
         case "audio":   SCContext.streamType = .systemaudio
             default: return // if we don't even know what to record I don't think we should even try
         }
+        func failToRecord(_ message: String) {
+            SCContext.streamType = nil
+            _ = createAlert(title: "Failed to Record".local, message: message, button1: "OK").runModal()
+        }
+
         var isDirectory: ObjCBool = false
         let outputPath = saveDirectory!
         if fd.fileExists(atPath: outputPath, isDirectory: &isDirectory) {
             if !isDirectory.boolValue {
-                SCContext.streamType = nil
-                _ = createAlert(title: "Failed to Record".local, message: "The output path is a file instead of a folder!".local, button1: "OK").runModal()
-                return
+                return failToRecord("The output path is a file instead of a folder!".local)
             }
         } else {
             do {
                 try fd.createDirectory(atPath: outputPath, withIntermediateDirectories: true, attributes: nil)
             } catch {
-                SCContext.streamType = nil
-                _ = createAlert(title: "Failed to Record".local, message: "Unable to create output folder!".local, button1: "OK").runModal()
-                return
+                return failToRecord("Unable to create output folder!".local)
             }
         }
 
         if let free = DiskSpace.availableBytes(at: outputPath), free < DiskSpace.startThreshold {
-            SCContext.streamType = nil
-            let message = String(format: "Not enough free disk space! Only %@ left on the output volume.".local, DiskSpace.formatted(free))
-            _ = createAlert(title: "Failed to Record".local, message: message, button1: "OK").runModal()
-            return
+            return failToRecord(String(format: "Not enough free disk space! Only %@ left on the output volume.".local, DiskSpace.formatted(free)))
         }
 
         // file preparation
@@ -306,9 +304,9 @@ extension AppDelegate {
             return
         }
         if !audioOnly { registerGlobalMouseMonitor() }
-        DispatchQueue.main.async {
-            updateStatusBar()
-            DiskSpace.startMonitoring(SCContext.filePath) { SCContext.abortRecording(reason: $0) }
+        DispatchQueue.main.async { updateStatusBar() }
+        DiskSpace.startMonitoring(SCContext.filePath) { free in
+            SCContext.abortRecording(reason: String(format: "The output disk is almost full, only %@ left.".local, DiskSpace.formatted(free)))
         }
         if preventSleep { SleepPreventer.shared.preventSleep(reason: "Screen recording in progress") }
     }

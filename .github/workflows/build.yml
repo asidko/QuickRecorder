@@ -3,7 +3,6 @@ name: Build
 on:
   push:
     branches: ['**']
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -13,10 +12,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Show toolchain
-        run: xcodebuild -version
-
-      - name: Resolve packages
-        run: xcodebuild -resolvePackageDependencies -project QuickRecorder.xcodeproj
+        run: xcodebuild -version && ls -d /Applications/Xcode*.app
 
       - name: Build
         run: xcodebuild build -project QuickRecorder.xcodeproj -scheme QuickRecorder -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
