@@ -232,3 +232,9 @@
 "The output disk is almost full, only %@ left." = "輸出磁碟即將寫滿, 僅剩 %@.";
 "Not enough free disk space to mix the audio tracks." = "磁碟可用空間不足, 無法混縮音軌.";
 "The recording was saved with separate audio tracks to: %@" = "錄製檔案已儲存為多音軌格式: %@";
+"Recording Not Saved" = "錄製未儲存";
+"No video was captured, so nothing was saved. Try recording again." = "未擷取到任何畫面, 因此沒有儲存檔案. 請重新錄製.";
+"No audio was captured, so nothing was saved. Try recording again." = "未擷取到任何音訊, 因此沒有儲存檔案. 請重新錄製.";
+"The recording could not be saved." = "無法儲存錄製檔案.";
+"Switched to H.265" = "已切換到 H.265";
+"H.264 hardware encoding isn't available at this resolution. Using H.265 for this recording to keep CPU usage low and avoid dropped frames." = "目前解析度下無法使用 H.264 硬體編碼. 本次錄製將使用 H.265, 以降低 CPU 佔用並避免掉幀.";

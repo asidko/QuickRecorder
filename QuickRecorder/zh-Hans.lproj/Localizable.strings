@@ -234,3 +234,9 @@
 "The output disk is almost full, only %@ left." = "输出磁盘即将写满, 仅剩 %@.";
 "Not enough free disk space to mix the audio tracks." = "磁盘可用空间不足, 无法混缩音轨.";
 "The recording was saved with separate audio tracks to: %@" = "录制文件已保存为多音轨格式: %@";
+"Recording Not Saved" = "录制未保存";
+"No video was captured, so nothing was saved. Try recording again." = "未捕获到任何画面, 因此没有保存文件. 请重新录制.";
+"No audio was captured, so nothing was saved. Try recording again." = "未捕获到任何音频, 因此没有保存文件. 请重新录制.";
+"The recording could not be saved." = "无法保存录制文件.";
+"Switched to H.265" = "已切换到 H.265";
+"H.264 hardware encoding isn't available at this resolution. Using H.265 for this recording to keep CPU usage low and avoid dropped frames." = "当前分辨率下无法使用 H.264 硬件编码. 本次录制将使用 H.265, 以降低 CPU 占用并避免丢帧.";

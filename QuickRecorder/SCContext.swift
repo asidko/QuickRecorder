@@ -194,7 +194,17 @@ class SCContext {
         return ud.string(forKey: "saveDirectory")! + (capture ? "/Capturing at ".local : "/Recording at ".local) + dateFormatter.string(from: Date())
     }
     
+    // AAC and Opus reject rates outside this set, and a microphone can report 96 kHz or more.
+    // ALAC and FLAC carry high rates natively, so they keep the hardware rate.
+    private static func encodableSampleRate(_ rate: Int, format: String) -> Int {
+        if format == AudioFormat.alac.rawValue || format == AudioFormat.flac.rawValue { return rate }
+        let supported = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000]
+        if supported.contains(rate) { return rate }
+        return supported.min(by: { abs($0 - rate) < abs($1 - rate) }) ?? 48000
+    }
+
     static func updateAudioSettings(format: String = ud.string(forKey: "audioFormat") ?? "", rate: Int = 48000) -> [String : Any] {
+        let rate = encodableSampleRate(rate, format: format)
         var audioSettings: [String : Any] = [AVSampleRateKey : rate, AVNumberOfChannelsKey : 2] // reset audioSettings
         var bitRate = ud.integer(forKey: "audioQuality") * 1000
         if rate < 44100 { bitRate = min(64000, bitRate / 2) }
@@ -212,7 +222,9 @@ class SCContext {
             audioSettings[AVFormatIDKey] = ud.string(forKey: "videoFormat") != VideoFormat.mp4.rawValue ? kAudioFormatOpus : kAudioFormatMPEG4AAC
             audioSettings[AVEncoderBitRateKey] =  bitRate
         default:
-            assertionFailure("unknown audio format while setting audio settings: ".local + (ud.string(forKey: "audioFormat") ?? "[no defaults]".local))
+            print("unknown audio format while setting audio settings: ".local + (ud.string(forKey: "audioFormat") ?? "[no defaults]".local))
+            audioSettings[AVFormatIDKey] = kAudioFormatMPEG4AAC // settings without a format id make AVAssetWriterInput throw
+            audioSettings[AVEncoderBitRateKey] = bitRate
         }
         return audioSettings
     }
