@@ -45,7 +45,6 @@ class SCContext {
     static var vW: AVAssetWriter!
     static var vwInput, awInput, micInput: AVAssetWriterInput!
     static var writeFailureHandled = false
-    static var permissionRetries = 0
     static let maxPermissionRetries = 3
     static var startTime: Date?
     static var timePassed: TimeInterval = 0
@@ -70,15 +69,14 @@ class SCContext {
         return result
     }
     
-    private static func updateAvailableContent(completion: @escaping (SCShareableContent?) -> Void) {
+    private static func updateAvailableContent(retriesLeft: Int = maxPermissionRetries, completion: @escaping (SCShareableContent?) -> Void) {
         SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { [self] content, error in
             if let error = error {
                 switch error {
                 case SCStreamError.userDeclined:
-                    if permissionRetries < maxPermissionRetries {
-                        permissionRetries += 1
+                    if retriesLeft > 0 { // a denied grant never resolves itself, so the retry chain has to end
                         DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-                            self.updateAvailableContent() {_ in}
+                            self.updateAvailableContent(retriesLeft: retriesLeft - 1) {_ in}
                         }
                     } else {
                         requestPermissions()
@@ -90,7 +88,6 @@ class SCContext {
                 return
             }
 
-            permissionRetries = 0
             availableContent = content
             if let displays = content?.displays, !displays.isEmpty {
                 completion(content) // 返回成功获取的 content
@@ -351,6 +348,10 @@ class SCContext {
     
     static func append(_ sample: @autoclosure () -> CMSampleBuffer?, to input: AVAssetWriterInput) {
         guard !writeFailureHandled, input.isReadyForMoreMediaData, let sample = sample() else { return }
+        write(sample, to: input)
+    }
+
+    private static func write(_ sample: CMSampleBuffer, to input: AVAssetWriterInput) {
         if input.append(sample) { return }
         guard vW?.status == .failed else { return } // a rejected sample on a healthy writer is a normal drop
         abortRecording()
@@ -792,14 +793,14 @@ class SCContext {
         return outSampleBuffer
     }
 
-    static func offsetAudio(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer {
+    static func offsetSample(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer {
         guard timeOffset.value > 0 else { return sampleBuffer }
         return adjustTime(sample: sampleBuffer, by: timeOffset) ?? sampleBuffer
     }
 
     static func appendMic(_ sample: @autoclosure () -> CMSampleBuffer?) {
         guard !writeFailureHandled, micInput.isReadyForMoreMediaData, let sample = sample() else { return }
-        let buffer = offsetAudio(sample)
+        let buffer = offsetSample(sample)
         let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
         // Drop any backward-PTS buffer that slips through the resume window: mic runs on its
         // own queue and can append before the resume block refreshes timeOffset, and a
@@ -807,7 +808,7 @@ class SCContext {
         // because a single mic source is active per recording.
         if let last = lastMicPTS, CMTimeCompare(pts, last) <= 0 { return }
         lastMicPTS = pts
-        append(buffer, to: micInput)
+        write(buffer, to: micInput)
     }
 
     static func showNotification(title: String, body: String, id: String) {

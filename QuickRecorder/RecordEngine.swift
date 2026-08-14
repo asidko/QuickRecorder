@@ -584,7 +584,7 @@ extension AppDelegate {
                 SCContext.startTime = Date.now
                 SCContext.vW.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(SampleBuffer))
             }
-            if (SCContext.timeOffset.value > 0) { SampleBuffer = SCContext.adjustTime(sample: SampleBuffer, by: SCContext.timeOffset) ?? sampleBuffer }
+            SampleBuffer = SCContext.offsetSample(SampleBuffer)
             var pts = CMSampleBufferGetPresentationTimeStamp(SampleBuffer)
             let dur = CMSampleBufferGetDuration(SampleBuffer)
             if (dur.value > 0) { pts = CMTimeAdd(pts, dur) }
@@ -628,7 +628,7 @@ extension AppDelegate {
                 }
             } else {
                 if SCContext.lastPTS == nil { return }
-                SCContext.append(SCContext.offsetAudio(SampleBuffer), to: SCContext.awInput)
+                SCContext.append(SCContext.offsetSample(SampleBuffer), to: SCContext.awInput)
             }
 #if compiler(>=6.0)
         case .microphone:
