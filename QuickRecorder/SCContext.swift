@@ -46,6 +46,7 @@ class SCContext {
     static var vwInput, awInput, micInput: AVAssetWriterInput!
     static var writeFailureHandled = false
     static let maxPermissionRetries = 3
+    private static var permissionAlertShown = false
     static var startTime: Date?
     static var timePassed: TimeInterval = 0
     static var stream: SCStream!
@@ -69,18 +70,20 @@ class SCContext {
         return result
     }
     
-    private static func updateAvailableContent(retriesLeft: Int = maxPermissionRetries, completion: @escaping (SCShareableContent?) -> Void) {
-        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: true) { [self] content, error in
+    private static func updateAvailableContent(onScreenOnly: Bool = true, retriesLeft: Int = maxPermissionRetries, completion: @escaping (SCShareableContent?) -> Void) {
+        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: onScreenOnly) { [self] content, error in
             if let error = error {
                 switch error {
                 case SCStreamError.userDeclined:
-                    if retriesLeft > 0 { // a denied grant never resolves itself, so the retry chain has to end
+                    // A grant given while the app is running only lands on a later attempt, so the
+                    // caller is answered by whichever attempt settles it rather than by this one.
+                    if retriesLeft > 0 {
                         DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-                            self.updateAvailableContent(retriesLeft: retriesLeft - 1) {_ in}
+                            self.updateAvailableContent(onScreenOnly: onScreenOnly, retriesLeft: retriesLeft - 1, completion: completion)
                         }
-                    } else {
-                        requestPermissions()
+                        return
                     }
+                    requestPermissions() // a denied grant never resolves itself, so the chain has to end
                 default:
                     print("Error: failed to fetch available content: ".local, error.localizedDescription)
                 }
@@ -97,18 +100,10 @@ class SCContext {
             }
         }
     }
-    
+
     static func updateAvailableContent(completion: @escaping () -> Void) {
-        SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, error in
-            if let error = error {
-                switch error {
-                case SCStreamError.userDeclined: requestPermissions()
-                default: print("Error: failed to fetch available content: ".local, error.localizedDescription)
-                }
-                return
-            }
-            availableContent = content
-            assert(availableContent?.displays.isEmpty != nil, "There needs to be at least one display connected!".local)
+        updateAvailableContent(onScreenOnly: false) { content in
+            guard content != nil else { return }
             completion()
         }
     }
@@ -262,6 +257,11 @@ class SCContext {
     
     private static func requestPermissions() {
         DispatchQueue.main.async {
+            // Every declined fetch funnels here, and several views can each have one in
+            // flight, so the alert is shown once. Content already in hand means another
+            // fetch was granted while this one was queued, and quitting would be wrong.
+            guard !permissionAlertShown, availableContent == nil else { return }
+            permissionAlertShown = true
             let alert = createAlert(title: "Permission Required",
                                                        message: "QuickRecorder needs screen recording permissions, even if you only intend on recording audio.",
                                                        button1: "Open Settings",

@@ -206,8 +206,6 @@
 "Open App Store" = "从 App Store 安装";
 "Hide Control Center Icons" = "隐藏控制中心图标";
 "Hide the clock, Wi-Fi, bluetooth, volume and other system icons in the menu bar." = "隐藏菜单栏上的时钟、Wi-Fi、蓝牙和音量等系统图标.";
-"Use H.265" = "使用 H.265";
-"Would you like to use H.265 format for better video quality and smaller file size?" = "是否使用 H.265 编码格式以获得\n更好的录像画质和更小的文件体积?";
 "QuickRecorder needs this permission to record your camera or mobile device." = "QuickRecorder 需要使用此权限以录制来自摄像头或移动设备的画面.";
 "Select Window Directly" = "直接点选窗口";
 

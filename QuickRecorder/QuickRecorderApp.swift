@@ -226,7 +226,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, SCStreamDelegate, SCStreamOu
                 "countdown": 0,
                 "videoFormat": VideoFormat.mp4.rawValue,
                 "pixelFormat": PixFormat.delault.rawValue,
-                "encoder": Encoder.h264.rawValue,
+                "encoder": Encoder.h265.rawValue,
                 "poSafeDelay": 1,
                 "saveDirectory": userDesktop as NSString,
                 "showMouse": true,
@@ -348,10 +348,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, SCStreamDelegate, SCStreamOu
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         closeAllWindow()
         if showOnDock { _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: true) }
-        tips("Would you like to use H.265 format for better video quality and smaller file size?",
-             id: "qr.switch-to-h265.note", buttonTitle: "Use H.265", switchButton: true) {
-            ud.setValue(Encoder.h265.rawValue, forKey: "encoder")
-        }
     }
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
