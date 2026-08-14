@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and release
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    env:
+      XCODE: /Applications/Xcode_16.4.app
+      APP: build/Build/Products/Release/QuickRecorder.app
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Select toolchain
+        run: sudo xcode-select -s "$XCODE" && xcodebuild -version
+
+      - name: Build
+        run: xcodebuild build -project QuickRecorder.xcodeproj -scheme QuickRecorder -configuration Release -destination 'platform=macOS' -derivedDataPath build ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
+
+      # The tag is the release's identity; a bundle built from a stale MARKETING_VERSION
+      # would ship under a version string that does not exist in the project.
+      - name: Check the bundle version matches the tag
+        run: |
+          version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+          echo "tag=$TAG bundle=$version"
+          [ "$TAG" = "v$version" ] || { echo "::error::tag $TAG does not match MARKETING_VERSION $version"; exit 1; }
+
+      - name: Verify universal binary
+        run: |
+          lipo -archs "$APP/Contents/MacOS/QuickRecorder"
+          lipo -archs "$APP/Contents/MacOS/QuickRecorder" | grep -q x86_64 || { echo "::error::missing x86_64 slice"; exit 1; }
+          lipo -archs "$APP/Contents/MacOS/QuickRecorder" | grep -q arm64 || { echo "::error::missing arm64 slice"; exit 1; }
+
+      # Nested bundles are signed inside-out: --deep is deprecated and leaves the
+      # framework's inner Mach-O untouched. Hardened runtime is omitted on purpose -
+      # it enables library validation, which rejects an ad-hoc framework loaded by an
+      # ad-hoc app because neither carries a Team ID.
+      - name: Ad-hoc sign
+        run: |
+          V="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+          for target in "$V/XPCServices/Downloader.xpc" "$V/XPCServices/Installer.xpc" "$V/Updater.app" "$APP/Contents/Frameworks/Sparkle.framework" "$APP"; do
+            codesign --force --sign - "$target"
+          done
+          codesign --verify --strict "$APP"
+
+      # A drag-to-install image: the app sits beside an Applications symlink, so there is
+      # no unzip step. Window placement is left to Finder's default because the runner is
+      # headless and osascript layout cannot run there.
+      - name: Build the disk image
+        run: |
+          mkdir -p dist/stage
+          cp -R "$APP" dist/stage/
+          ln -s /Applications dist/stage/Applications
+          hdiutil create -volname QuickRecorder -srcfolder dist/stage -fs HFS+ -format UDZO -ov "dist/QuickRecorder-$TAG-macos-universal.dmg"
+          rm -rf dist/stage
+
+      - name: Checksums
+        working-directory: dist
+        run: shasum -a 256 *.dmg > SHA256SUMS && cat SHA256SUMS
+
+      - name: Release notes
+        run: |
+          cat > dist/notes.md <<NOTES
+          ## Install
+          Download the \`.dmg\`, open it, and drag QuickRecorder to Applications.
+
+          The app is ad-hoc signed rather than notarized, so on first launch macOS will
+          refuse to open it. Go to System Settings > Privacy & Security and press
+          **Open Anyway**. This is needed once.
+
+          Screen recording and microphone permissions must be granted under
+          System Settings > Privacy & Security before the first recording.
+
+          ## Platform
+          macOS 12.3 or later. Universal binary (Apple Silicon and Intel).
+
+          ## Verify the download
+          \`\`\`
+          shasum -a 256 -c SHA256SUMS
+          \`\`\`
+
+          ## What is in this build
+          See [Enhanced in this fork](https://github.com/${{ github.repository }}/blob/main/README.md#enhanced-in-this-fork)
+          for the fixes this build carries over upstream.
+          NOTES
+          cat dist/notes.md
+
+      # Drafted first so a failed upload never leaves a published release with missing
+      # assets; published only once both files are confirmed attached.
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$TAG" --draft --title "QuickRecorder $TAG" --notes-file dist/notes.md "dist/QuickRecorder-$TAG-macos-universal.dmg" dist/SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=$(gh release view "$TAG" --json assets -q '.assets[].name')
+          echo "$assets"
+          echo "$assets" | grep -q "QuickRecorder-$TAG-macos-universal.dmg" || { echo "::error::dmg missing from release"; exit 1; }
+          echo "$assets" | grep -q SHA256SUMS || { echo "::error::checksums missing from release"; exit 1; }
+          gh release edit "$TAG" --draft=false --latest
