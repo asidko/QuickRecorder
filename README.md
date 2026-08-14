@@ -15,32 +15,21 @@
 </p>
 
 ## Enhanced in this fork
-This fork follows upstream and adds recording-reliability fixes on top of it. Nothing here changes how the app is used.
+Upstream QuickRecorder plus a set of recording-reliability fixes. Nothing here changes how the app is used.
 
-### Surviving a full disk
-- A recording refuses to start below 2 GB free, and says how much is actually left.
-- The output volume is polled while recording. Below 500 MB the recording is stopped and finalised, so the file stays playable instead of ending up as a headerless blob.
-- Every `AVAssetWriter` append is checked. A failed writer aborts the recording instead of silently discarding frames while the UI still shows green.
-- Before mixing the audio tracks the app checks there is room for the export. If there is not, the recording is saved with separate audio tracks rather than lost.
+- **Disk space guard** - Refuses to start below 2 GB free and stops recording below 500 MB, so the file closes properly and still plays.
+- **Write failure detection** - Every write is checked, so a dead writer stops the recording instead of showing a green UI over nothing.
+- **Audio mix fallback** - No room to mix the tracks? The recording is saved with separate audio instead of being lost.
+- **Bounded permission retries** - Ends the endless "Open System Settings" loop when screen recording access is denied.
+- **High sample rate mics** - Clamps rates above 48 kHz for AAC/Opus, so a 96 kHz interface no longer crashes the app.
+- **Pause/resume audio sync** - System audio and mic are pause-compensated like video, so the tracks stop drifting apart.
+- **Mic timestamp guard** - A backward mic timestamp after a resume used to kill the whole recording, video included.
+- **No more 0 KB files** - A recording that captured nothing is discarded; partial recordings are always kept.
+- **Honest device recordings** - iPhone and camera-only captures report real errors instead of always saying "Recording Completed".
+- **Smarter encoder choice** - Above the H.264 hardware limit it switches to hardware H.265 rather than a CPU-hungry software encoder.
+- **CI builds** - GitHub Actions builds every change and verifies both Intel and Apple Silicon slices.
 
-### Crashes and permissions
-- Screen recording permission retries are bounded, which fixes an endless loop of "Open System Settings" prompts when access is denied.
-- Microphone rates above 48 kHz are clamped to what the AAC/Opus encoder accepts; ALAC and FLAC keep the hardware rate. A 96 kHz interface used to crash the app.
-- An unknown audio format falls back to AAC instead of building writer settings that throw.
-- `try!` on the audio engine and the unused sync-alert helper are gone.
-
-### Audio sync across pause and resume
-- System audio is pause-compensated like video, so the two tracks no longer drift further apart with every pause.
-- Mic buffers arriving inside the resume window are dropped and guarded against backward timestamps. A non-monotonic mic append used to fail the shared writer and take the video down with it.
-- `adjustTime` sizes its timing array from the buffer's real entry count. Audio buffers carry one timing entry for all their samples, so the old code filled the rest with garbage.
-
-### Reporting the truth
-- A recording that captured no frame is deleted instead of leaving a 0 KB file behind. Partially written recordings are always kept, never deleted.
-- iOS device and camera-only recordings honour the capture error instead of reporting "Recording Completed" unconditionally.
-- Above the H.264 hardware encoder's resolution ceiling the recording switches to hardware H.265, instead of silently falling back to a software encoder that spikes CPU and drops frames.
-- GitHub Actions builds every push and pull request and verifies both `x86_64` and `arm64` slices are present.
-
-The pause/resume audio, empty-capture and encoder fixes are cherry-picked from [stevenevan/QuickRecorder](https://github.com/stevenevan/QuickRecorder); the sample rate crash fix is ported from [zzditto/QuickRecorder](https://github.com/zzditto/QuickRecorder). The disk space work is offered upstream in [lihaoyun6/QuickRecorder#288](https://github.com/lihaoyun6/QuickRecorder/pull/288).
+Pause/resume audio, empty-capture and encoder fixes are cherry-picked from [stevenevan/QuickRecorder](https://github.com/stevenevan/QuickRecorder); the sample rate crash fix is ported from [zzditto/QuickRecorder](https://github.com/zzditto/QuickRecorder). The disk space work is offered upstream in [lihaoyun6/QuickRecorder#288](https://github.com/lihaoyun6/QuickRecorder/pull/288).
 
 ## Installation and Usage
 ### System Requirements:
