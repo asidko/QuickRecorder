@@ -396,10 +396,17 @@ extension AppDelegate {
         let encoderMultiplier: Double = encoderIsH265 ? 0.5 : 0.9
         let resolution = Double(max(600, conf.width)) * Double(max(600, conf.height))
         var qualityMultiplier = 1 - (log10(sqrt(resolution) * fpsMultiplier) / 5)
+        let encoderQuality: Double
         switch videoQuality {
-            case 0.3: qualityMultiplier = max(0.1, qualityMultiplier)
-            case 0.7: qualityMultiplier = max(0.4, min(0.6, qualityMultiplier * 3))
-            default: qualityMultiplier = 1.0
+            case 0.3:
+                qualityMultiplier = max(0.1, qualityMultiplier)
+                encoderQuality = 0.40
+            case 0.7:
+                qualityMultiplier = max(0.4, min(0.6, qualityMultiplier * 3))
+                encoderQuality = 0.50
+            default:
+                qualityMultiplier = 1.0
+                encoderQuality = 0.62
         }
         let h264Level = AVVideoProfileLevelH264HighAutoLevel
         let h265Level = recordHDR ? kVTProfileLevel_HEVC_Main10_AutoLevel : kVTProfileLevel_HEVC_Main_AutoLevel
@@ -408,23 +415,50 @@ extension AppDelegate {
         print("framerate set in app: \(frameRate)")
         print("target bitrate: \(targetBitrate/1000000)")
 
+        let bitrateOnlyProperties: [String: Any] = [
+            AVVideoProfileLevelKey: encoderIsH265 ? h265Level : h264Level,
+            AVVideoAverageBitRateKey: max(200000, Int(targetBitrate)),
+            AVVideoExpectedSourceFrameRateKey: frameRate,
+        ]
+        // A bitrate target spends the full rate on every frame; a quality target spends
+        // almost nothing on the static frames that make up most of a screen recording. It
+        // replaces the bitrate rather than capping it, because VideoToolbox ignores
+        // AVVideoAverageBitRateKey whenever a quality value is present. HDR and alpha are
+        // excluded: both trade size for fidelity on purpose, and the alpha plane carries a
+        // quality property of its own.
+        let qualityProperties: [String: Any] = [
+            AVVideoProfileLevelKey: encoderIsH265 ? h265Level : h264Level,
+            AVVideoExpectedSourceFrameRateKey: frameRate,
+            AVVideoQualityKey: encoderQuality,
+            // AVFoundation defaults to a keyframe every second, which is expensive at Retina
+            // sizes. Longer than 2s compresses better still, but VideoEditor trims through a
+            // passthrough export, so cuts snap to whatever this interval is.
+            AVVideoMaxKeyFrameIntervalDurationKey: 2.0,
+            AVVideoMaxKeyFrameIntervalKey: frameRate * 2,
+        ]
+        let qualityModeUsable = !recordHDR && !withAlpha
+
         var videoSettings: [String: Any] = [
             AVVideoCodecKey: encoderIsH265 ? ((withAlpha && !recordHDR) ? AVVideoCodecType.hevcWithAlpha : AVVideoCodecType.hevc) : AVVideoCodecType.h264,
             // yes, not ideal if we want more than these encoders in the future, but it's ok for now
             AVVideoWidthKey: conf.width,
             AVVideoHeightKey: conf.height,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoProfileLevelKey: encoderIsH265 ? h265Level : h264Level,
-                AVVideoAverageBitRateKey: max(200000, Int(targetBitrate)),
-                AVVideoExpectedSourceFrameRateKey: frameRate,
-            ] as [String : Any]
+            AVVideoCompressionPropertiesKey: qualityModeUsable ? qualityProperties : bitrateOnlyProperties
         ]
-        
+
         if !recordHDR {
             videoSettings[AVVideoColorPropertiesKey] = [
                 AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
                 AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2] as [String : Any]
+        }
+
+        // AVAssetWriterInput raises an ObjC exception on settings the encoder rejects, and
+        // Swift cannot catch it. H.264 refuses a quality target above 4096x2304, so a 5K or
+        // 6K screen recorded as H.264 lands on the bitrate settings instead.
+        if qualityModeUsable && !SCContext.vW.canApply(outputSettings: videoSettings, forMediaType: .video) {
+            videoSettings[AVVideoCompressionPropertiesKey] = bitrateOnlyProperties
+            print("encoder rejected the quality target, using bitrate: \(targetBitrate/1000000)")
         }
         
         SCContext.vwInput = AVAssetWriterInput(mediaType: AVMediaType.video, outputSettings: videoSettings)
