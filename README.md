@@ -17,6 +17,7 @@
 ## Enhanced in this fork
 Upstream QuickRecorder plus a set of recording-reliability fixes. Nothing here changes how the app is used.
 
+- **Balanced mic and system audio** - Your voice and what you hear are levelled to match, so the mic is no longer buried under the call.
 - **Much smaller files** - Encodes to a quality target instead of a fixed bitrate, so static screen content costs almost nothing. Around 4x smaller with no visible loss.
 - **Disk space guard** - Refuses to start below 2 GB free and stops recording below 500 MB, so the file closes properly and still plays.
 - **Write failure detection** - Every write is checked, so a dead writer stops the recording instead of showing a green UI over nothing.
