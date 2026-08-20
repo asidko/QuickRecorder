@@ -195,9 +195,9 @@ class SCContext {
         return supported.min(by: { abs($0 - rate) < abs($1 - rate) }) ?? 48000
     }
 
-    static func updateAudioSettings(format: String = ud.string(forKey: "audioFormat") ?? "", rate: Int = 48000) -> [String : Any] {
+    static func updateAudioSettings(format: String = ud.string(forKey: "audioFormat") ?? "", rate: Int = 48000, channels: Int = 2) -> [String : Any] {
         let rate = encodableSampleRate(rate, format: format)
-        var audioSettings: [String : Any] = [AVSampleRateKey : rate, AVNumberOfChannelsKey : 2] // reset audioSettings
+        var audioSettings: [String : Any] = [AVSampleRateKey : rate, AVNumberOfChannelsKey : channels] // reset audioSettings
         var bitRate = ud.integer(forKey: "audioQuality") * 1000
         if rate < 44100 { bitRate = min(64000, bitRate / 2) }
         switch format {
@@ -626,23 +626,16 @@ class SCContext {
         return getMicrophone().first(where: { $0.localizedName == deviceName })
     }
     
-    /*static func getChannelCount() -> Int? {
-        if let device = getCurrentMic() {
-            if let channels = device.formats.first?.formatDescription.audioChannelLayout?.numberOfChannels {
-                return channels
-            }
-            
-            let activeFormat = device.activeFormat
-            let description = activeFormat.formatDescription
-            if let audioStreamBasicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee {
-                let channelCount = audioStreamBasicDescription.mChannelsPerFrame
-                return max(2, Int(channelCount))
-            }
-        }
-        return getDefaultChannelCount()
+    // Channels the microphone actually delivers. Built-in mics are mono, and declaring a
+    // stereo track for them costs 3 dB: the encoder spreads the one channel across two.
+    static func getMicChannelCount() -> Int {
+        guard let device = getCurrentMic(),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(device.activeFormat.formatDescription)?.pointee
+        else { return 2 }
+        return max(1, min(2, Int(asbd.mChannelsPerFrame)))
     }
-    
-    static func getDefaultChannelCount() -> Int? {
+
+    /*static func getDefaultChannelCount() -> Int? {
         var deviceID = AudioObjectID(0)
         var propertySize = UInt32(MemoryLayout.size(ofValue: deviceID))
         
@@ -823,6 +816,44 @@ class SCContext {
         }
     }
     
+    // Loudest sample in a track, 0 when it cannot be read.
+    private static func peakAmplitude(of track: AVAssetTrack, in asset: AVAsset) -> Float {
+        guard let reader = try? AVAssetReader(asset: asset) else { return 0 }
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false])
+        guard reader.canAdd(output) else { return 0 }
+        reader.add(output)
+        guard reader.startReading() else { return 0 }
+        var peak: Float = 0
+        while let sample = output.copyNextSampleBuffer() {
+            try? sample.withAudioBufferList { list, _ in
+                for buffer in list {
+                    guard let data = buffer.mData else { continue }
+                    let samples = UnsafeBufferPointer(start: data.assumingMemoryBound(to: Float.self),
+                                                      count: Int(buffer.mDataByteSize) / MemoryLayout<Float>.size)
+                    for value in samples { peak = max(peak, abs(value)) }
+                }
+            }
+        }
+        reader.cancelReading()
+        return peak
+    }
+
+    // A microphone sits far below system audio, so summing the two as captured buries the
+    // speaker's own voice under whatever is playing. Both tracks are lifted towards one
+    // target instead, which is what makes them audible together.
+    private static func levelMatchVolume(for track: AVAssetTrack, in asset: AVAsset) -> Float {
+        let target: Float = 0.45 // about -7 dBFS, so two tracks at once still sum below clipping
+        let audible: Float = 0.003 // about -50 dBFS; below this a track holds noise, not signal
+        let maxGain: Float = 8 // +18 dB, past which room noise rises with the voice
+        let peak = peakAmplitude(of: track, in: asset)
+        guard peak > audible else { return 1 }
+        return min(maxGain, max(1, target / peak)) // only ever lifts, so a healthy track is untouched
+    }
+
     static func mixAudioTracks(videoURL: URL, completion: @escaping (Result<URL, Error>) -> Void) {
         showNotification(title: "Still Processing".local, body: "Mixing audio track...".local, id: "quickrecorder.processing.\(UUID().uuidString)")
         
@@ -856,13 +887,17 @@ class SCContext {
             }
         }
         
+        // Parameters must name the composition's own tracks: the source asset numbers its
+        // tracks differently, and a parameter whose trackID matches nothing is dropped.
         let audioMix = AVMutableAudioMix()
-        audioMix.inputParameters = audioTracks.map {
-            let parameters = AVMutableAudioMixInputParameters(track: $0)
-            parameters.trackID = $0.trackID
+        let mixTracks = audioOnlyComposition.tracks(withMediaType: .audio)
+        audioMix.inputParameters = zip(mixTracks, audioTracks).map { mixTrack, sourceTrack in
+            let parameters = AVMutableAudioMixInputParameters(track: mixTrack)
+            parameters.trackID = mixTrack.trackID
+            parameters.setVolume(levelMatchVolume(for: sourceTrack, in: asset), at: .zero)
             return parameters
         }
-        
+
         guard let audioExportSession = AVAssetExportSession(asset: audioOnlyComposition, presetName: AVAssetExportPresetHighestQuality) else {
             completion(.failure(NSError(domain: "AudioExportSessionError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio export session."])))
             return
@@ -922,7 +957,8 @@ class SCContext {
                 
                 exportSession.outputURL = outputURL
                 exportSession.outputFileType = fileType ?? .mp4
-                exportSession.audioMix = audioMix
+                // No mix here: the audio arrives already mixed and levelled, and these
+                // parameters address the other composition's track numbering.
                 
                 exportSession.exportAsynchronously {
                     switch exportSession.status {
