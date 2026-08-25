@@ -376,14 +376,13 @@ class SCContext {
         return videoURL.deletingPathExtension().deletingPathExtension()
     }
 
-    private static func hasSpaceToMix() -> Bool {
-        guard let size = DiskSpace.fileSize(at: filePath),
-              let free = DiskSpace.availableBytes(at: filePath) else { return true }
+    private static func hasSpaceToMix(source: URL) -> Bool {
+        guard let size = DiskSpace.fileSize(at: source.path),
+              let free = DiskSpace.availableBytes(at: source.path) else { return true }
         return free > size + DiskSpace.stopThreshold // mixAudioTracks writes a full copy next to the source
     }
 
-    private static func salvageUnmixedRecording(reason: String) {
-        let source = filePath.url
+    private static func salvageUnmixedRecording(reason: String, source: URL, preview: NSImage?) {
         let target = mixOutputURL(for: source)
         try? fd.removeItem(at: mixIntermediateURL(for: source))
         var saved = source
@@ -391,7 +390,7 @@ class SCContext {
         showNotification(title: "Audio Not Mixed".local,
                          body: reason + " " + String(format: "The recording was saved with separate audio tracks to: %@".local, saved.path),
                          id: "quickrecorder.error.\(UUID().uuidString)")
-        DispatchQueue.main.async { showPreview(path: saved.path) }
+        DispatchQueue.main.async { showPreview(path: saved.path, image: preview) }
     }
 
     static func stopRecording() {
@@ -441,11 +440,15 @@ class SCContext {
                         if !writeFailureHandled { showNotification(title: "Failed to save file".local, body: "\(err)", id: "quickrecorder.error.\(UUID().uuidString)") }
                     } else {
                         if ud.bool(forKey: "recordMic") && ud.bool(forKey: "recordWinSound") && ud.bool(forKey: "remuxAudio") {
-                            guard hasSpaceToMix() else {
-                                salvageUnmixedRecording(reason: "Not enough free disk space to mix the audio tracks.".local)
+                            // The mix outlives this recording, so it works from values taken now:
+                            // starting another recording rewrites filePath and clears firstFrame.
+                            let source = filePath.url
+                            let preview = firstFrame?.nsImage
+                            guard hasSpaceToMix(source: source) else {
+                                salvageUnmixedRecording(reason: "Not enough free disk space to mix the audio tracks.".local, source: source, preview: preview)
                                 return
                             }
-                            mixAudioTracks(videoURL: filePath.url) { result in
+                            mixAudioTracks(videoURL: source) { result in
                                 switch result {
                                 case .success(let url):
                                     print("Exported video to \(String(describing: url.path))")
@@ -456,12 +459,12 @@ class SCContext {
                                         if ud.bool(forKey: "trimAfterRecord") {
                                             AppDelegate.shared.createNewWindow(view: VideoTrimmerView(videoURL: url), title: url.lastPathComponent, only: false)
                                         } else {
-                                            showPreview(path: url.path)
+                                            showPreview(path: url.path, image: preview)
                                         }
                                     }
                                 case .failure(let error):
                                     print("Failed to export video: \(error.localizedDescription)")
-                                    salvageUnmixedRecording(reason: error.localizedDescription)
+                                    salvageUnmixedRecording(reason: error.localizedDescription, source: source, preview: preview)
                                 }
                             }
                         }
@@ -555,7 +558,7 @@ class SCContext {
                 let id = "quickrecorder.completed.\(UUID().uuidString)"
                 showNotification(title: title, body: body, id: id)
             } else {
-                showPreview(path: filePath)
+                showPreview(path: filePath, image: firstFrame?.nsImage)
             }
             trimVideo()
         }
@@ -564,14 +567,11 @@ class SCContext {
         firstFrame = nil
     }
     
-    static func showPreview(path: String, image: NSImage? = nil) {
+    // The frame comes from the caller: by the time an asynchronous export reports back,
+    // firstFrame belongs to whichever recording started since.
+    static func showPreview(path: String, image: NSImage?) {
         if !ud.bool(forKey: "showPreview") { return }
-        var previewImage: NSImage?
-        let previewURL = fd.temporaryDirectory.appendingPathComponent("qr-preview.jpg")
-        if image == nil { firstFrame?.nsImage?.saveToFile(previewURL, type: .jpeg) }
-        
-        if let i = image { previewImage = i } else { previewImage = NSImage(contentsOf: previewURL) }
-        if let previewImage = previewImage, let screen = getScreenWithMouse() {
+        if let previewImage = image, let screen = getScreenWithMouse() {
             let contentView = NSHostingView(rootView: PreviewView(frame: previewImage, filePath: path))
             previewWindow.contentView = contentView
             previewWindow.setFrameOrigin(NSPoint(x: screen.frame.maxX - 280, y: screen.frame.minY + 20))
@@ -818,7 +818,12 @@ class SCContext {
     
     static func mixAudioTracks(videoURL: URL, completion: @escaping (Result<URL, Error>) -> Void) {
         showNotification(title: "Still Processing".local, body: "Mixing audio track...".local, id: "quickrecorder.processing.\(UUID().uuidString)")
-        
+        // Levelling decodes both tracks end to end, and stopRecording blocks on the writer
+        // completion this is called from, so measuring here would freeze the UI for that long.
+        DispatchQueue.global(qos: .userInitiated).async { performAudioMix(videoURL: videoURL, completion: completion) }
+    }
+
+    private static func performAudioMix(videoURL: URL, completion: @escaping (Result<URL, Error>) -> Void) {
         let asset = AVAsset(url: videoURL)
         let audioOutputURL = mixIntermediateURL(for: videoURL)
         let outputURL = mixOutputURL(for: videoURL)
@@ -926,7 +931,7 @@ class SCContext {
                     switch exportSession.status {
                     case .completed:
                         let  fileManager = fd
-                        try? fileManager.removeItem(atPath: filePath)
+                        try? fileManager.removeItem(at: videoURL)
                         try? fileManager.removeItem(atPath: audioOutputURL.path)
                         completion(.success(outputURL))
                     case .failed:
