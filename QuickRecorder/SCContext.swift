@@ -45,6 +45,17 @@ class SCContext {
     static var vW: AVAssetWriter!
     static var vwInput, awInput, micInput: AVAssetWriterInput!
     static var writeFailureHandled = false
+    // Every writer interaction happens on this queue: ScreenCaptureKit delivers its samples
+    // here, and the mic queues enter it to append. That makes session start, appends, and
+    // finalization mutually ordered instead of racing across capture threads.
+    static let writerQueue = DispatchQueue(label: "com.lihaoyun6.QuickRecorder.writer")
+    // The append gate, touched only on writerQueue: open from the moment the writer session
+    // exists until stopRecording closes it, so no sample can reach an input outside that span.
+    static var canAppend = false
+    // Seal on the whole writer lifecycle, touched only on writerQueue. stopRecording sets it
+    // and record() lifts it for the next recording, so a capture callback that arrives after
+    // the stop barrier cannot start a session or reopen the gate on a writer being finalized.
+    static var writerSealed = true
     static let maxPermissionRetries = 3
     private static var permissionAlertShown = false
     static var startTime: Date?
@@ -347,7 +358,7 @@ class SCContext {
     }
     
     static func append(_ sample: @autoclosure () -> CMSampleBuffer?, to input: AVAssetWriterInput) {
-        guard !writeFailureHandled, input.isReadyForMoreMediaData, let sample = sample() else { return }
+        guard canAppend, !writeFailureHandled, input.isReadyForMoreMediaData, let sample = sample() else { return }
         write(sample, to: input)
     }
 
@@ -408,15 +419,20 @@ class SCContext {
 
         if let w = NSApp.windows.first(where:  { $0.title == "Area Overlayer".local }) { w.close() }
         
+        // Closing the gate waits for any append in flight and rejects every later one,
+        // so the markAsFinished and finishWriting below can never collide with a sample.
+        writerQueue.sync { canAppend = false; writerSealed = true }
         if stream != nil { stream.stopCapture() }
         stream = nil
         if ud.bool(forKey: "recordMic") {
-            micInput.markAsFinished()
+            // Sources stop before the input is finished: a mic buffer still in flight
+            // would otherwise append to a finished input, which throws.
             AudioRecorder.shared.stop()
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
             //DispatchQueue.global().async { try? audioEngine.inputNode.setVoiceProcessingEnabled(false) }
             if ud.bool(forKey: "enableAEC") { try? AECEngine.stopAudioUnit() }
+            micInput.markAsFinished()
         }
         let audioCaptureEmpty  = (streamType == .systemaudio && startTime == nil)
         let audioCaptureFailed = (streamType == .systemaudio && audioWriteFailed)
@@ -792,16 +808,21 @@ class SCContext {
     }
 
     static func appendMic(_ sample: @autoclosure () -> CMSampleBuffer?) {
-        guard !writeFailureHandled, micInput.isReadyForMoreMediaData, let sample = sample() else { return }
-        let buffer = offsetSample(sample)
-        let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
-        // Drop any backward-PTS buffer that slips through the resume window: mic runs on its
-        // own queue and can append before the resume block refreshes timeOffset, and a
-        // non-monotonic append would fail the whole shared writer. One guard var suffices
-        // because a single mic source is active per recording.
-        if let last = lastMicPTS, CMTimeCompare(pts, last) <= 0 { return }
-        lastMicPTS = pts
-        write(buffer, to: micInput)
+        // Mic sources deliver on their own queues; the cheap check outside the queue drops
+        // the steady stream of buffers that arrive while no session exists yet.
+        guard !writeFailureHandled, startTime != nil, let sample = sample() else { return }
+        writerQueue.sync {
+            guard canAppend, vW?.status == .writing, micInput.isReadyForMoreMediaData else { return }
+            let buffer = offsetSample(sample)
+            let pts = CMSampleBufferGetPresentationTimeStamp(buffer)
+            // Drop any backward-PTS buffer that slips through the resume window: mic runs on its
+            // own queue and can append before the resume block refreshes timeOffset, and a
+            // non-monotonic append would fail the whole shared writer. One guard var suffices
+            // because a single mic source is active per recording.
+            if let last = lastMicPTS, CMTimeCompare(pts, last) <= 0 { return }
+            lastMicPTS = pts
+            write(buffer, to: micInput)
+        }
     }
 
     static func showNotification(title: String, body: String, id: String) {

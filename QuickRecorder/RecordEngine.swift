@@ -278,14 +278,17 @@ extension AppDelegate {
         
         SCContext.stream = SCStream(filter: filter, configuration: conf, delegate: self)
         do {
-            try SCContext.stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .global())
-            if #available(macOS 13, *) { try SCContext.stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global()) }
+            try SCContext.stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: SCContext.writerQueue)
+            if #available(macOS 13, *) { try SCContext.stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: SCContext.writerQueue) }
             if !audioOnly {
                 initVideo(conf: conf, forceH265: forceH265)
             } else {
                 //SCContext.startTime = Date.now
                 if recordMic { startMicRecording() }
             }
+            // Arms the writer for this recording on the queue every callback runs on, so the
+            // seal from the previous stop cannot leak into the stream that is about to start.
+            SCContext.writerQueue.sync { SCContext.canAppend = false; SCContext.writerSealed = false }
             try await SCContext.stream.startCapture()
         } catch {
             assertionFailure("capture failed".local)
@@ -535,60 +538,62 @@ extension AppDelegate {
         }
     }
     
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
-        if SCContext.saveFrame, let imageBuffer = sampleBuffer.imageBuffer {
-            SCContext.saveFrame = false
-            
-            var ciImage = CIImage(cvPixelBuffer: imageBuffer)
-            let url = "\(SCContext.getFilePath(capture: true)).png".url
-            if !recordHDR {
-                sampleBuffer.nsImage?.saveToFile(url)
-            } else {
-                let context = CIContext()
-                
-                // Create the HEIF destination with the correct UTI
-                //            if let destination = url? {
-                // Specify format and color space (assuming default settings here)
-                //                let format = CIFormat.rgb10
-                let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
-                
-                // let colorSpace = ciImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
-                
-                // Image exposure needs to be increased by one stop to match the original
-                ciImage = ciImage.applyingFilter("CIExposureAdjust", parameters: ["inputEV": 1.0])
-                
-                
-                
-                
-                
-                //                context.writeHEIF10Representation(of: ciImage, to: destination as! URL, colorSpace: colorSpace)
-                do{
-                    // try context.writeHEIF10Representation(of:ciImage,
-                    //                                       to:url,
-                    //                                       colorSpace:colorSpace,
-                    //                                       options: [
-                    //     kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 1.0
-                    if #available(macOS 14.0, *) {
-                        try context.writePNGRepresentation(of:ciImage,
-                                                           to:url,
-                                                           format: .RGB10,
-                                                           colorSpace:colorSpace
-                        )
-                    } else {
-                        // Fallback on earlier versions
-                        print("RGB10 PNG not supported on this macOS version")
-                        try context.writePNGRepresentation(of:ciImage,
-                                                           to:url,
-                                                           format: .RGBA8,
-                                                           colorSpace:colorSpace)
-                    }
-                    //        try context.writePNGRepresentation(of:outImage, to:outURL, format: .RGBA16,colorSpace:colorSpace,options:[:])
-                } catch let error {
-                    // Handle the error case
-                    print("Error: \(error)")
+    // Renders and writes a captured frame to disk. Heavy enough (full-res render plus
+    // PNG encode) that it must stay off the sample handler queue, or capture stalls.
+    private func saveScreenshot(of sampleBuffer: CMSampleBuffer) {
+        guard let imageBuffer = sampleBuffer.imageBuffer else { return }
+        var ciImage = CIImage(cvPixelBuffer: imageBuffer)
+        let url = "\(SCContext.getFilePath(capture: true)).png".url
+        if !recordHDR {
+            sampleBuffer.nsImage?.saveToFile(url)
+        } else {
+            let context = CIContext()
+            // Create the HEIF destination with the correct UTI
+            //            if let destination = url? {
+            // Specify format and color space (assuming default settings here)
+            //                let format = CIFormat.rgb10
+            let colorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) ?? CGColorSpaceCreateDeviceRGB()
+            // let colorSpace = ciImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+            // Image exposure needs to be increased by one stop to match the original
+            ciImage = ciImage.applyingFilter("CIExposureAdjust", parameters: ["inputEV": 1.0])
+            //                context.writeHEIF10Representation(of: ciImage, to: destination as! URL, colorSpace: colorSpace)
+            do{
+                // try context.writeHEIF10Representation(of:ciImage,
+                //                                       to:url,
+                //                                       colorSpace:colorSpace,
+                //                                       options: [
+                //     kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: 1.0
+                if #available(macOS 14.0, *) {
+                    try context.writePNGRepresentation(of:ciImage,
+                                                       to:url,
+                                                       format: .RGB10,
+                                                       colorSpace:colorSpace
+                    )
+                } else {
+                    // Fallback on earlier versions
+                    print("RGB10 PNG not supported on this macOS version")
+                    try context.writePNGRepresentation(of:ciImage,
+                                                       to:url,
+                                                       format: .RGBA8,
+                                                       colorSpace:colorSpace)
                 }
-                //                CGImageDestinationFinalize(destination)
+                //        try context.writePNGRepresentation(of:outImage, to:outURL, format: .RGBA16,colorSpace:colorSpace,options:[:])
+            } catch let error {
+                // Handle the error case
+                print("Error: \(error)")
             }
+            //                CGImageDestinationFinalize(destination)
+        }
+    }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of outputType: SCStreamOutputType) {
+        // A sample from a stream that is not the live one, or that lands after stopRecording
+        // sealed the writer, belongs to a recording that already ended; acting on it would
+        // touch a writer being finalized. The seal is read on writerQueue, where SCK delivers.
+        guard stream === SCContext.stream, !SCContext.writerSealed else { return }
+        if SCContext.saveFrame, sampleBuffer.imageBuffer != nil {
+            SCContext.saveFrame = false
+            DispatchQueue.global(qos: .utility).async { self.saveScreenshot(of: sampleBuffer) }
         }
         if SCContext.isPaused { return }
         guard sampleBuffer.isValid else { return }
@@ -615,8 +620,9 @@ extension AppDelegate {
                   status == .complete else { return }
             
             if SCContext.vW != nil && SCContext.vW?.status == .writing, SCContext.startTime == nil {
-                SCContext.startTime = Date.now
                 SCContext.vW.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(SampleBuffer))
+                SCContext.startTime = Date.now
+                SCContext.canAppend = true
             }
             SampleBuffer = SCContext.offsetSample(SampleBuffer)
             var pts = CMSampleBufferGetPresentationTimeStamp(SampleBuffer)
@@ -652,6 +658,7 @@ extension AppDelegate {
                 hideMousePointer = true
                 if SCContext.vW != nil && SCContext.vW?.status == .writing, SCContext.startTime == nil {
                     SCContext.vW.startSession(atSourceTime: CMSampleBufferGetPresentationTimeStamp(SampleBuffer))
+                    SCContext.canAppend = true
                 }
                 if SCContext.startTime == nil { SCContext.startTime = Date.now }
                 guard let samples = SampleBuffer.asPCMBuffer else { return }
