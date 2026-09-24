@@ -20,7 +20,7 @@ struct AppSelector: View {
     
     var body: some View {
         ZStack {
-            VStack(spacing: 15) {
+            VStack(spacing: 5) {
                 if #available(macOS 15, *) {
                     Text("Please select the App(s) to record").offset(y: 12)
                 } else {
@@ -215,6 +215,7 @@ struct OptionsView: View {
     @AppStorage("recordHDR")      private var recordHDR: Bool = false
     @AppStorage("micDevice")      private var micDevice: String = "default"
     @AppStorage("enableAEC")      private var enableAEC: Bool = false
+    @AppStorage("saveMP3")        private var saveMP3: Bool = false
     
     var body: some View {
         VStack(spacing: 6) {
@@ -356,6 +357,18 @@ struct OptionsView: View {
                             }).buttonStyle(.plain).fixedSize()
                         }
                     }
+                    Toggle(isOn: $saveMP3) {
+                        HStack(spacing: 0){
+                            Image(systemName: "music.note")
+                                .font(isMacOS12 ? .body : .subheadline)
+                                .frame(width: isMacOS12 ? 20 : 16)
+                            Text("Save MP3")
+                                .font(isMacOS12 ? .body : .subheadline)
+                        }
+                    }
+                    .fixedSize()
+                    .toggleStyle(.checkbox)
+                    .disabled(!recordMic && !recordWinSound)
                 }.padding(.trailing, isMacOS12 ? 0 : -17)
             }
         }

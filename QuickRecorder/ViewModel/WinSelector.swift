@@ -25,7 +25,7 @@ struct WinSelector: View {
     
     var body: some View {
         ZStack {
-            VStack(spacing: 15) {
+            VStack(spacing: 5) {
                 if #available(macOS 15, *) {
                     Text("Please select the window(s) to record").offset(y: 12)
                 } else {

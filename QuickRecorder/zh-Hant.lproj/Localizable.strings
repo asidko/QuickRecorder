@@ -234,3 +234,8 @@
 "The recording could not be saved." = "無法儲存錄製檔案.";
 "Switched to H.265" = "已切換到 H.265";
 "H.264 hardware encoding isn't available at this resolution. Using H.265 for this recording to keep CPU usage low and avoid dropped frames." = "目前解析度下無法使用 H.264 硬體編碼. 本次錄製將使用 H.265, 以降低 CPU 佔用並避免掉幀.";
+"Mixed Audio" = "混合音訊";
+"System Output" = "系統輸出";
+"Microphone Input" = "麥克風輸入";
+"Save MP3" = "儲存 MP3";
+"Failed to save MP3" = "儲存 MP3 時出錯";

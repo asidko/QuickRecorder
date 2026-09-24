@@ -122,6 +122,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, SCStreamDelegate, SCStreamOu
     @AppStorage("remuxAudio")       var remuxAudio: Bool = true
     @AppStorage("recordWinSound")   var recordWinSound: Bool = true
     @AppStorage("recordHDR")        var recordHDR: Bool = false
+    @AppStorage("saveMP3")          var saveMP3: Bool = false
     @AppStorage("encoder")          var encoder: Encoder = .h265
     @AppStorage("highRes")          var highRes: Int = 2
     @AppStorage("AECLevel")         var AECLevel: String = "mid"
@@ -238,6 +239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, SCStreamDelegate, SCStreamOu
                 "showMenubar": false,
                 "enableAEC": false,
                 "recordHDR": false,
+                "saveMP3": false,
                 "preventSleep": true,
                 "showPreview": isMacOS12 ? false : true,
                 "savedArea": [String: [String: CGFloat]]()

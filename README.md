@@ -15,9 +15,11 @@
 </p>
 
 ## Enhanced in this fork
-Upstream QuickRecorder plus a set of recording-reliability fixes. Nothing here changes how the app is used.
+Upstream QuickRecorder plus a set of recording-reliability fixes and two audio features.
 
 - **Balanced mic and system audio** - Your voice and what you hear are levelled to match, so the mic is no longer buried under the call.
+- **Switchable audio tracks** - With mic and system audio both on, the video plays the mix by default and also carries "System Output" and "Microphone Input" as separate tracks, so a noisy room can be muted by switching tracks in the player.
+- **MP3 copy** - The "Save MP3" checkbox (off by default, remembered) saves the audio the video plays by default as an MP3 next to it.
 - **Much smaller files** - Encodes to a quality target instead of a fixed bitrate, so static screen content costs almost nothing. Around 4x smaller with no visible loss.
 - **Disk space guard** - Refuses to start below 2 GB free and stops recording below 500 MB, so the file closes properly and still plays.
 - **Write failure detection** - Every write is checked, so a dead writer stops the recording instead of showing a green UI over nothing.

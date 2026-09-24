@@ -19,7 +19,7 @@ struct ScreenSelector: View {
     
     var body: some View {
         ZStack {
-            VStack(spacing: 15) {
+            VStack(spacing: 5) {
                 Text("Please select the screen to record")
                 let count = viewModel.screenThumbnails.count
                 ScrollView(.vertical) {
